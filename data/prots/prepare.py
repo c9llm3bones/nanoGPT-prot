@@ -1,27 +1,51 @@
-
 import os
 import pickle
 import numpy as np
-from datasets import load_dataset
+from datasets import load_dataset, Dataset
 from config import *
 
+DEBUG = False # I actually really liked this flag
+hf_ds = "bayes-group-diffusion/OAS95-aligned-cleaned"
 
-HF_DATASET = "bayes-group-diffusion/OAS95-aligned-cleaned"
-N_SAMPLES = 5000  
+def make_stream_ds():
+    return  load_dataset(hf_ds, split="train", streaming=True)
 
-# 64 GB 
-#ds = load_dataset(HF_DATASET)
+# 64 GB of data
+if load_full_ds:
+    ds = load_dataset(hf_ds, split="train")
+else:
+    ds_stream = make_stream_ds()
+    rows = list(ds_stream.take(n_rows))
+    ds = Dataset.from_list(rows)
 
-# splitted dataset
-ds = load_dataset(HF_DATASET, split=f"train.shuffle(seed={SEED})[:{N_SAMPLES}]")
+if DEBUG:
+    print(ds.info)
+    print()
+
+df = ds.to_pandas()
+if DEBUG:
+    print(df.head())
+    print()
+
+sequences = df['sequence'].tolist()
+init_sequences = df['init_seq'].tolist()
+
+if DEBUG:
+    print(sequences[:10])
+    print(init_sequences[:10])
+    print()
+
+special_tokens = set(['<HEAVY>', '<LIGHT>', '<EOS>'])
 
 def norm_class(x):
     if x is None:
         return ""
     s = str(x).lower()
     if 'mouse' in s:
+        special_tokens.add('<MOUSE>')
         return '<MOUSE>'
-    return f'<{x.upper()}>'
+    special_tokens.add(f'<{s.upper()}>')
+    return f'<{s.upper()}>'
 
 def norm_type(x):
     if x is None:
@@ -31,30 +55,51 @@ def norm_type(x):
         return '<HEAVY>'
     if 'light' in s:
         return '<LIGHT>'
-    return f'<{x.upper()}>'
+    special_tokens.add(f'<{s.upper()}>')
+    return f'<{s.upper()}>' 
+
+classes = df['class'].apply(norm_class).tolist()
+types = df['type'].apply(norm_type).tolist()
+
+if DEBUG:
+    print(classes[:10])
+    print(types[:10])
+    print()
 
 # get all sequences w.r.t. config 
 all_sequences = []
+i = 0
 for row in ds:
-    prompt = "<eos>"
+    i+=1
+    if DEBUG:
+        if i % 100 == 0:
+            print("row: ", row)
+    prompt = "<EOS>"
     if np.random.rand() < P_CLASS:
         prompt += norm_class(row.get('class'))
     if np.random.rand() < P_TYPE:
         prompt += norm_type(row.get('type'))
 
     if USE_SEQUENCE and row.get('sequence'):  
-        prompt += row.get('sequence').replace('\n','').strip()
+        prompt += row.get('sequence','').replace('\n','').strip()
     elif not USE_SEQUENCE and row.get('init_seq'):
-        prompt += row.get('init_seq').replace('\n','').strip()
+        prompt += row.get('init_seq','').replace('\n','').strip()
     
     if prompt:
         all_sequences.append(prompt)
+    
+    if DEBUG:
+        if i % 100 == 0:
+            print(prompt)
 
 print(f"Prepared {len(all_sequences)} sequences")
 
 # build vocab
 base_chars = list('ACDEFGHIKLMNPQRSTVWY-')
-special_tokens = ['<eos>','<class>','<type>','<HUMAN>','<MOUSE>','<HEAVY>','<LIGHT>']
+special_tokens = list(special_tokens)
+if DEBUG:
+    print('classes and types: ', special_tokens)
+    print()
 vocab = base_chars + special_tokens
 stoi = { ch:i for i,ch in enumerate(vocab) }
 itos = { i:ch for i,ch in enumerate(vocab) }
@@ -94,6 +139,5 @@ meta = {
 }
 with open(os.path.join(os.path.dirname(__file__), 'meta.pkl'), 'wb') as f:
     pickle.dump(meta, f)
-
 
 print("preparing done")
