@@ -93,6 +93,8 @@ for row in ds:
         if i % 100 == 0:
             print(expr)
 
+if DEBUG:
+    print(all_sequences[:1000])
 print(f"Prepared {len(all_sequences)} sequences")
 
 # build vocab
@@ -115,29 +117,28 @@ def encode(seq):
             j = seq.find('>', i)
             if j != -1:
                 token = seq[i:j+1]
-                if token in stoi:
-                    yield stoi[token]
-                else:
-                    yield stoi['<UNK>']
+                yield stoi.get(token, stoi['<UNK>'])
                 i = j+1
                 continue
             else:
                 yield stoi['<UNK>']
                 i += 1
                 continue
-        if seq[i] in stoi:
-            yield stoi[seq[i]]
+        yield stoi.get(seq[i], stoi['<UNK>'])
         i += 1
 
-n = len(all_sequences)
-n_train = int(n*0.9)
+all_lists = [list(encode(seq)) for seq in all_sequences] # lists of encoded seqs
+all_ids = np.concatenate(all_lists).astype(np.uint16) # cat all lists
+print("total tokens (all):", len(all_ids))
+if DEBUG:
+    print(all_ids[:1000])
 
-# change: concatenate because seqs have different lens 
-train_ids = np.concatenate([list(encode(seq)) for seq in all_sequences[:n_train]]).astype(np.uint16)
-val_ids = np.concatenate([list(encode(seq)) for seq in all_sequences[n_train:]]).astype(np.uint16)
+n = len(all_ids)
+n_train = int(n * 0.9)
+train_ids = all_ids[:n_train]
+val_ids = all_ids[n_train:]
 print(f"train has {len(train_ids)} tokens")
-print(f"val has {len(val_ids)} tokens")
-
+print(f"val   has {len(val_ids)} tokens")
 train_ids.tofile(os.path.join(os.path.dirname(__file__), 'train.bin'))
 val_ids.tofile(os.path.join(os.path.dirname(__file__), 'val.bin'))
 
