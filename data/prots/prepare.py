@@ -36,7 +36,7 @@ if DEBUG:
     print(init_sequences[:10])
     print()
 
-special_tokens = set(['<HEAVY>', '<LIGHT>', '<EOS>', '<UNK>'])
+special_tokens = set(['<HEAVY>', '<LIGHT>'])
 
 def norm_class(x):
     if x is None:
@@ -101,11 +101,11 @@ print(f"Prepared {len(all_sequences)} sequences")
 base_chars = list('ACDEFGHIKLMNPQRSTVWY')
 if use_sequence:
     base_chars.append('-')
-special_tokens = sorted(list(special_tokens)) # sort for deterministic encoding 
+special_tokens = ['<EOS>'] + ['<UNK>'] + sorted(list(special_tokens)) # sort for deterministic encoding 
 if DEBUG:
     print('classes and types: ', special_tokens)
     print()
-vocab = base_chars + special_tokens
+vocab = special_tokens + base_chars
 stoi = { ch:i for i,ch in enumerate(vocab) }
 itos = { i:ch for i,ch in enumerate(vocab) }
 
