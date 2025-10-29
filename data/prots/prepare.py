@@ -3,6 +3,7 @@ import pickle
 import numpy as np
 from datasets import load_dataset, Dataset
 from config import *
+import re
 
 DEBUG = False # I actually really liked this flag
 hf_ds = "bayes-group-diffusion/OAS95-aligned-cleaned"
@@ -35,7 +36,7 @@ if DEBUG:
     print(init_sequences[:10])
     print()
 
-special_tokens = set(['<HEAVY>', '<LIGHT>', '<EOS>'])
+special_tokens = set(['<HEAVY>', '<LIGHT>', '<EOS>', '<UNK>'])
 
 def norm_class(x):
     if x is None:
@@ -69,34 +70,36 @@ if DEBUG:
 # get all sequences w.r.t. config 
 all_sequences = []
 i = 0
+rng = np.random.RandomState(seed) # for deterministic sampling
 for row in ds:
     i+=1
     if DEBUG:
         if i % 100 == 0:
             print("row: ", row)
-    prompt = "<EOS>"
-    if np.random.rand() < P_CLASS:
-        prompt += norm_class(row.get('class'))
-    if np.random.rand() < P_TYPE:
-        prompt += norm_type(row.get('type'))
+    expr = "<EOS>"
+    if rng.rand() < p_class:
+        expr += norm_class(row.get('class'))
+    if rng.rand() < p_type:
+        expr += norm_type(row.get('type'))
 
-    if USE_SEQUENCE and row.get('sequence'):  
-        prompt += row.get('sequence','').replace('\n','').strip()
-    elif not USE_SEQUENCE and row.get('init_seq'):
-        prompt += row.get('init_seq','').replace('\n','').strip()
-    
-    if prompt:
-        all_sequences.append(prompt)
+    if use_sequence and row.get('sequence'):  
+        expr += row.get('sequence','').replace('\n','').strip()
+    elif not use_sequence and row.get('init_seq'):
+        expr += row.get('init_seq','').replace('\n','').strip()
+    if not re.match(r"^<EOS>(?:<[^>]+>)*$", expr): # ensure to have AA
+        all_sequences.append(expr)
     
     if DEBUG:
         if i % 100 == 0:
-            print(prompt)
+            print(expr)
 
 print(f"Prepared {len(all_sequences)} sequences")
 
 # build vocab
-base_chars = list('ACDEFGHIKLMNPQRSTVWY-')
-special_tokens = list(special_tokens)
+base_chars = list('ACDEFGHIKLMNPQRSTVWY')
+if use_sequence:
+    base_chars.append('-')
+special_tokens = sorted(list(special_tokens)) # sort for deterministic encoding 
 if DEBUG:
     print('classes and types: ', special_tokens)
     print()
@@ -114,7 +117,13 @@ def encode(seq):
                 token = seq[i:j+1]
                 if token in stoi:
                     yield stoi[token]
+                else:
+                    yield stoi['<UNK>']
                 i = j+1
+                continue
+            else:
+                yield stoi['<UNK>']
+                i += 1
                 continue
         if seq[i] in stoi:
             yield stoi[seq[i]]
