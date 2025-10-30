@@ -33,9 +33,9 @@ from model import GPTConfig, GPT
 # default config values designed to train a gpt2 (124M) on OpenWebText
 # I/O
 out_dir = 'out'
-eval_interval = 2000
+eval_interval = 100
 log_interval = 1
-eval_iters = 200
+eval_iters = 20
 eval_only = False # if True, script exits right after the first eval
 always_save_checkpoint = True # if True, always save a checkpoint after each eval
 init_from = 'scratch' # 'scratch' or 'resume' or 'gpt2*'
@@ -44,19 +44,19 @@ wandb_log = False # disabled by default
 wandb_project = 'owt'
 wandb_run_name = 'gpt2' # 'run' + str(time.time())
 # data
-dataset = 'openwebtext'
-gradient_accumulation_steps = 5 * 8 # used to simulate larger batch sizes
-batch_size = 12 # if gradient_accumulation_steps > 1, this is the micro-batch size
-block_size = 1024
+dataset = 'prots'
+gradient_accumulation_steps = 1 # used to simulate larger batch sizes
+batch_size = 4 # if gradient_accumulation_steps > 1, this is the micro-batch size
+block_size = 155
 # model
-n_layer = 12
-n_head = 12
-n_embd = 768
+n_layer = 4
+n_head = 4
+n_embd = 256
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False # do we use bias inside LayerNorm and Linear layers?
 # adamw optimizer
 learning_rate = 6e-4 # max learning rate
-max_iters = 600000 # total number of training iterations
+max_iters = 1000 # total number of training iterations
 weight_decay = 1e-1
 beta1 = 0.9
 beta2 = 0.95
@@ -64,14 +64,14 @@ grad_clip = 1.0 # clip gradients at this value, or disable if == 0.0
 # learning rate decay settings
 decay_lr = True # whether to decay the learning rate
 warmup_iters = 2000 # how many steps to warm up for
-lr_decay_iters = 600000 # should be ~= max_iters per Chinchilla
+lr_decay_iters = 1000 # should be ~= max_iters per Chinchilla
 min_lr = 6e-5 # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
 # DDP settings
-backend = 'nccl' # 'nccl', 'gloo', etc.
+backend = 'gloo' # 'nccl', 'gloo', etc.
 # system
-device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
-dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
-compile = True # use PyTorch 2.0 to compile the model to be faster
+device = 'cpu' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1' etc., or try 'mps' on macbooks
+dtype = 'float32' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float32' # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
+compile = False # use PyTorch 2.0 to compile the model to be faster
 # -----------------------------------------------------------------------------
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open('configurator.py').read()) # overrides from command line or config file
@@ -113,7 +113,24 @@ ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=
 
 # poor man's data loader
 data_dir = os.path.join('data', dataset)
-def get_batch(split):
+meta_path = os.path.join(data_dir, 'meta.pkl')
+with open(meta_path, 'rb') as f:
+    meta = pickle.load(f)
+
+seq_class_ids = np.memmap(os.path.join(data_dir, 'seq_class_ids.bin'), dtype=np.uint16, mode='r')
+seq_type_ids  = np.memmap(os.path.join(data_dir, 'seq_type_ids.bin'), dtype=np.uint16, mode='r')
+eos_ids = np.memmap(os.path.join(data_dir, 'eos_ids.bin'), dtype=np.uint16, mode='r')
+
+train_data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
+val_data   = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
+
+eos_token = meta['stoi']['<EOS>']
+
+# searching idxs only once
+train_eos = np.where(train_data == eos_token)[0]
+val_eos   = np.where(val_data   == eos_token)[0]
+
+def get_batch_old(split):
     # We recreate np.memmap every batch to avoid a memory leak, as per
     # https://stackoverflow.com/questions/45132940/numpy-memmap-memory-usage-want-to-iterate-once/61472122#61472122
     if split == 'train':
@@ -125,6 +142,50 @@ def get_batch(split):
     y = torch.stack([torch.from_numpy((data[i+1:i+1+block_size]).astype(np.int64)) for i in ix])
     if device_type == 'cuda':
         # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
+        x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
+    else:
+        x, y = x.to(device), y.to(device)
+    return x, y
+
+# new batch func
+def get_batch(split, p_class=0.5, p_type=0.5):
+    data = train_data if split=='train' else val_data
+    eos_indices = train_eos if split=='train' else val_eos
+    rng = np.random.RandomState(1338)
+
+    batch_X, batch_Y = [], []
+
+    # selecting random sequences
+    seq_indices = rng.choice(len(eos_indices), batch_size)
+
+    for seq_idx in seq_indices:
+        start_idx = eos_indices[seq_idx]
+        end_idx = min(start_idx + block_size, len(data))
+        seq = list(data[start_idx:end_idx])
+
+        # probabilistic insertion
+        c_id = seq_class_ids[seq_idx] if seq_idx < len(seq_class_ids) else -1
+        t_id = seq_type_ids[seq_idx]  if seq_idx < len(seq_type_ids)  else -1
+
+        insert = []
+        if c_id != -1 and rng.rand() < p_class:
+            insert.append(c_id)
+        if t_id != -1 and rng.rand() < p_type:
+            insert.append(t_id)
+        seq = [eos_token] + insert + seq[1:]  
+
+        # pad/truncate to block_size
+        if len(seq) < block_size + 1:
+            seq += [eos_token] * (block_size + 1 - len(seq)) # here just padding with <EOS> tokens
+        else:
+            seq = seq[:block_size + 1]
+
+        batch_X.append(seq[:block_size])
+        batch_Y.append(seq[1:block_size+1])
+
+    x = torch.tensor(batch_X, dtype=torch.long)
+    y = torch.tensor(batch_Y, dtype=torch.long)
+    if device_type == 'cuda':
         x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
     else:
         x, y = x.to(device), y.to(device)
