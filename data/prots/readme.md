@@ -1,12 +1,14 @@
 
 # prots dataset, character-level with special tokens
 
-Antibody protein sequences, treated on character-level with optional `<class>` and `<type>` tokens.
+Protein character-level sequences with  `<EOS>`,  `<class>` and `<type>` tokens.
+
+`data\prots\config.py`  — configuration file for dataset preprocessing
 
 Sequence format:
 
-expr = <EOS>(<class>?)(<type>?)<seq>
-dataset = (expr)*
+`expr = <EOS>(<class>?)(<type>?)<seq>`
+`dataset = (expr)*`
 
 - `<EOS>` — end-of-sequence token  
 - `<class>` — optional class token (e.g., `<MOUSE>`), inserted probabilistically  
