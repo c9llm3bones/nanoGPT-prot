@@ -135,14 +135,14 @@ eos_token = stoi['<EOS>']
 eos_ids = np.where(all_seq_ids == eos_token)[0]
 
 # maps for types and classes w.r.t. eos_ids, -1 for unknown
-seq_class_ids = np.array([stoi.get(c, -1) if c else -1 for c in all_classes], dtype=np.uint16)
-seq_type_ids  = np.array([stoi.get(t, -1) if t else -1 for t in all_types ], dtype=np.uint16)
+seq_class_ids = np.array([stoi.get(c, -1) if c else -1 for c in all_classes], dtype=np.int32)
+seq_type_ids  = np.array([stoi.get(t, -1) if t else -1 for t in all_types ], dtype=np.int32)
 
 if DEBUG:
   for (type_, class_)  in zip(seq_type_ids, seq_class_ids):
     print(itos[type_], " ", itos[class_])
 
-print("total tokens (all):", len(all_seq_ids) + len(seq_class_ids) + len(seq_type_ids))
+print("total tokens (without classes, types):", len(all_seq_ids))
 if DEBUG:
     print(all_seq_ids[:1000])
 
