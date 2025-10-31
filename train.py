@@ -26,7 +26,7 @@ import numpy as np
 import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
-from config.prots import p_class, p_type, use_sequence
+from config.prots import p_class, p_type
 from model import GPTConfig, GPT
 
 # -----------------------------------------------------------------------------
@@ -159,7 +159,7 @@ def get_batch(split):
 
     for seq_idx in seq_indices:
         start_idx = eos_indices[seq_idx]
-        end_idx = min(start_idx + block_size, len(data))
+        end_idx = eos_indices[seq_idx + 1] + 1 if seq_idx + 1 < len(eos_indices) else len(data)
         seq = list(data[start_idx:end_idx])
 
         # probabilistic insertion
