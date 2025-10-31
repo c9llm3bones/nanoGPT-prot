@@ -26,7 +26,7 @@ import numpy as np
 import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
-
+from config.prots import p_class, p_type, use_sequence
 from model import GPTConfig, GPT
 
 # -----------------------------------------------------------------------------
@@ -117,8 +117,8 @@ meta_path = os.path.join(data_dir, 'meta.pkl')
 with open(meta_path, 'rb') as f:
     meta = pickle.load(f)
 
-seq_class_ids = np.memmap(os.path.join(data_dir, 'seq_class_ids.bin'), dtype=np.uint16, mode='r')
-seq_type_ids  = np.memmap(os.path.join(data_dir, 'seq_type_ids.bin'), dtype=np.uint16, mode='r')
+seq_class_ids = np.memmap(os.path.join(data_dir, 'seq_class_ids.bin'), dtype=np.int32, mode='r')
+seq_type_ids  = np.memmap(os.path.join(data_dir, 'seq_type_ids.bin'), dtype=np.int32, mode='r')
 eos_ids = np.memmap(os.path.join(data_dir, 'eos_ids.bin'), dtype=np.uint16, mode='r')
 
 train_data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
@@ -148,15 +148,14 @@ def get_batch_old(split):
     return x, y
 
 # new batch func
-def get_batch(split, p_class=0.5, p_type=0.5):
+def get_batch(split):
     data = train_data if split=='train' else val_data
     eos_indices = train_eos if split=='train' else val_eos
-    rng = np.random.RandomState(1338)
 
     batch_X, batch_Y = [], []
 
     # selecting random sequences
-    seq_indices = rng.choice(len(eos_indices), batch_size)
+    seq_indices = np.random.choice(len(eos_indices), batch_size)
 
     for seq_idx in seq_indices:
         start_idx = eos_indices[seq_idx]
@@ -168,9 +167,9 @@ def get_batch(split, p_class=0.5, p_type=0.5):
         t_id = seq_type_ids[seq_idx]  if seq_idx < len(seq_type_ids)  else -1
 
         insert = []
-        if c_id != -1 and rng.rand() < p_class:
+        if c_id != -1 and np.random.rand() < p_class:
             insert.append(c_id)
-        if t_id != -1 and rng.rand() < p_type:
+        if t_id != -1 and np.random.rand() < p_type:
             insert.append(t_id)
         seq = [eos_token] + insert + seq[1:]  
 
