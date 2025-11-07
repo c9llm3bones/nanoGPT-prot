@@ -130,6 +130,25 @@ eos_token = meta['stoi']['<EOS>']
 train_eos = np.where(train_data == eos_token)[0]
 val_eos   = np.where(val_data   == eos_token)[0]
 
+def decode(tokens):
+    itos = meta['itos']
+    return ''.join([itos[i] for i in tokens])
+
+def generate_samples(model, prompts, max_new_tokens=100, temperature=1.0, top_k=None):
+    model.eval()
+    results = []
+    
+    for prompt in prompts:
+        context = torch.tensor([prompt])
+        
+        generated = model.generate(context, max_new_tokens, temperature, top_k)
+        
+        generated_text = decode(generated[0].tolist())
+        results.append(generated_text)
+        
+    model.train()
+    return results
+
 def get_batch_old(split):
     # We recreate np.memmap every batch to avoid a memory leak, as per
     # https://stackoverflow.com/questions/45132940/numpy-memmap-memory-usage-want-to-iterate-once/61472122#61472122
@@ -323,6 +342,22 @@ while True:
     if iter_num % eval_interval == 0 and master_process:
         losses = estimate_loss()
         print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        
+        print("\nGenerating..")
+        
+        prompt_tokens = [
+            [eos_token, meta['stoi']['<HUMAN>'], meta['stoi']['<HEAVY>']],
+            [eos_token, meta['stoi']['<MOUSE>']],
+            [eos_token, meta['stoi']['<HEAVY>']],
+            [eos_token]
+        ]
+        
+        samples = generate_samples(raw_model, prompt_tokens, max_new_tokens=100, temperature=0.8, top_k=50)
+        
+        for i, sample in enumerate(samples):
+            print(f"Example {i+1}:", sample)
+        
+        print("\n")
         if wandb_log:
             wandb.log({
                 "iter": iter_num,
